@@ -9,7 +9,6 @@ from sc_copilot.data_gen import generate
 
 APP = Path(__file__).resolve().parent.parent / "app" / "streamlit_app.py"
 
-
 def test_app_demo(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     generate(tmp_path / "data" / "sc.db")

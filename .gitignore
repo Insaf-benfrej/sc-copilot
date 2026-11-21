@@ -5,3 +5,6 @@ __pycache__/
 data/
 *.db
 *.egg-info/
+mes_csv/
+eval/results/
+poetry.lock
