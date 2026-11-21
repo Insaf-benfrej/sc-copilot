@@ -276,3 +276,13 @@ def test_cli_confirmation_demandee_avant_les_appels_payants(tmp_path, capsys, mo
     monkeypatch.setattr("builtins.input", lambda _: "o")
     assert main(["--provider", "anthropic", "--runs", "1", "--limit", "2", "--out", "x.csv"]) == 0
     assert (tmp_path / "x.csv").exists()
+
+
+def test_questions_identiques_avec_des_commandes_ouvertes(tmp_path):
+    """Les commandes ouvertes ne changent ni l'OTIF attendu, ni la correspondance avec les outils."""
+    db = generate(tmp_path / "o.db", open_orders=30)
+    with sqlite3.connect(db) as c:
+        qs = build_questions(c)
+        for q in (q for q in qs if q.category == "kpi"):
+            assert reference_value(c, q) == pytest.approx(q.expected[0], abs=1e-3), q.id
+        assert qs[0].expected[0] == pytest.approx(0.736, abs=1e-3)

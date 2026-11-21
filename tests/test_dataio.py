@@ -123,11 +123,33 @@ def test_valeurs_invalides(csv_dir, table, column, value, expected):
     assert any(expected in i.message and i.table == table for i in errors(issues)), dataio.format_report(issues)
 
 
-def test_commande_non_recue_refusee_avec_explication(csv_dir):
+def test_commande_ouverte_acceptee_avec_avertissement(csv_dir):
+    def open_first(frame):
+        frame.loc[0, ["received_date", "qty_received"]] = ""
+
+    edit(csv_dir, "purchase_orders", open_first)
+    frames, issues = validate_folder(csv_dir)
+    assert frames is not None and not errors(issues)
+    assert any("1 commandes ouvertes" in i.message for i in issues)
+    assert frames["purchase_orders"]["received_date"].isna().sum() == 1
+
+
+def test_reception_a_moitie_remplie_refusee(csv_dir):
     edit(csv_dir, "purchase_orders", lambda f: f.__setitem__("received_date", f["received_date"].where(f.index != 0, "")))
     frames, issues = validate_folder(csv_dir)
     assert frames is None
-    assert any("received_date" in i.message and "vide" in i.message for i in errors(issues))
+    assert any("ensemble" in i.message for i in errors(issues))
+
+
+def test_base_avec_commandes_ouvertes_aller_retour(tmp_path):
+    db = generate(tmp_path / "o.db", open_orders=25)
+    export_csv(db, tmp_path / "csv")
+    frames, issues = validate_folder(tmp_path / "csv")
+    assert frames is not None, dataio.format_report(issues)
+    new_db = build_db(frames, tmp_path / "n.db")
+    with sqlite3.connect(new_db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM purchase_orders WHERE received_date IS NULL").fetchone()[0] == 25
+        assert kpi.otif(conn) == pytest.approx(0.736, abs=1e-3)
 
 
 def test_cles_en_double(csv_dir):

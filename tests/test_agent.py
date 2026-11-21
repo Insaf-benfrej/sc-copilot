@@ -18,7 +18,7 @@ from sc_copilot.agent import (
     main,
 )
 from sc_copilot.data_gen import generate
-from sc_copilot.tools import DATASET_TODAY
+from sc_copilot.tools import DATASET_TODAY, TOOLS
 
 
 @pytest.fixture(scope="module")
@@ -124,7 +124,7 @@ def test_avec_outils_le_menu_est_envoye(conn):
     adapter = ScriptedAdapter([final_turn()])
     agent = Agent(conn, adapter)
     agent.ask("Question")
-    assert len(adapter.seen_tools[0]) == 6
+    assert len(adapter.seen_tools[0]) == len(TOOLS)
     assert agent.system_prompt == SYSTEM_PROMPT and DATASET_TODAY in SYSTEM_PROMPT
 
 

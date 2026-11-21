@@ -144,8 +144,33 @@ def make_purchase_orders(
     return pd.DataFrame(rows)
 
 
-def generate(db_path: str | Path = "data/sc.db", seed: int = 42) -> Path:
-    """Crée (ou remplace) la base SQLite et renvoie son chemin."""
+def make_open_orders(rng: np.random.Generator, parts: pd.DataFrame, first_id: int, n: int) -> pd.DataFrame:
+    """Commandes passées dans les 14 dernières semaines et pas encore reçues (réception et quantité reçue vides)."""
+    rows = []
+    for order_id, part_id in enumerate(rng.choice(parts["part_id"].to_numpy(), n), start=first_id):
+        part = parts.loc[parts["part_id"] == part_id].iloc[0]
+        order_date = START_DATE + timedelta(weeks=int(rng.integers(N_WEEKS - 14, N_WEEKS)))
+        rows.append(
+            {
+                "order_id": order_id,
+                "part_id": int(part_id),
+                "supplier_id": int(part["supplier_id"]),
+                "order_date": order_date.isoformat(),
+                "promised_date": (order_date + timedelta(weeks=int(part["lead_time_weeks"]))).isoformat(),
+                "received_date": None,
+                "qty_ordered": int(rng.integers(10, 200)),
+                "qty_received": None,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def generate(db_path: str | Path = "data/sc.db", seed: int = 42, open_orders: int = 0) -> Path:
+    """Crée (ou remplace) la base SQLite et renvoie son chemin.
+
+    `open_orders` : nombre de commandes encore ouvertes à ajouter (0 par défaut, ce qui laisse la base
+    identique à celle des versions précédentes).
+    """
     rng = np.random.default_rng(seed)
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,6 +182,9 @@ def generate(db_path: str | Path = "data/sc.db", seed: int = 42) -> Path:
     demand = make_demand(rng, parts)
     stock = make_stock(rng, parts, demand)
     orders = make_purchase_orders(rng, parts, suppliers)
+    if open_orders > 0:  # tirage séparé : les autres tables ne changent pas
+        extra = make_open_orders(np.random.default_rng(seed + 1), parts, len(orders) + 1, open_orders)
+        orders = pd.concat([orders, extra], ignore_index=True)
 
     with sqlite3.connect(db_path) as conn:
         suppliers.to_sql("suppliers", conn, index=False)
@@ -168,5 +196,10 @@ def generate(db_path: str | Path = "data/sc.db", seed: int = 42) -> Path:
 
 
 if __name__ == "__main__":
-    path = generate()
-    print(f"Base créée : {path}")
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Crée la base fictive.")
+    parser.add_argument("--open-orders", type=int, default=0, help="nombre de commandes ouvertes à ajouter")
+    parser.add_argument("--db", default="data/sc.db")
+    args = parser.parse_args()
+    print(f"Base créée : {generate(args.db, open_orders=args.open_orders)}")

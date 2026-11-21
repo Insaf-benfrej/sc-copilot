@@ -66,7 +66,7 @@ def _scalar(conn, sql, params=()):
 
 _OTIF_SQL = (
     "SELECT AVG(CASE WHEN received_date <= promised_date AND qty_received >= qty_ordered "
-    "THEN 1.0 ELSE 0.0 END) FROM purchase_orders"
+    "THEN 1.0 ELSE 0.0 END) FROM purchase_orders WHERE received_date IS NOT NULL"
 )
 _AT_RISK_SQL = (
     "WITH last AS (SELECT DISTINCT week_start FROM demand ORDER BY week_start DESC LIMIT 12), "
@@ -97,7 +97,7 @@ def build_questions(conn: sqlite3.Connection) -> list[Question]:
     add("kpi", "Quel est le taux OTIF global ?", [round(_scalar(conn, _OTIF_SQL), 4)],
         ("get_otif", "run_sql_readonly"), ("get_otif", {}, ("otif",)))
     for sid in (3, 8, 12, 20):
-        value = round(_scalar(conn, _OTIF_SQL + " WHERE supplier_id = ?", (sid,)), 4)
+        value = round(_scalar(conn, _OTIF_SQL + " AND supplier_id = ?", (sid,)), 4)
         add("kpi", f"Quel est le taux OTIF du fournisseur {sid} ?", [value],
             ("get_otif", "run_sql_readonly"), ("get_otif", {"supplier_id": sid}, ("otif",)))
     add("kpi", "Combien de pièces sont à risque de rupture (couverture de stock plus courte que le délai d'approvisionnement) ?",

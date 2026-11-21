@@ -17,11 +17,15 @@ def otif(conn: sqlite3.Connection, supplier_id: int | None = None) -> float:
 
     - à l'heure : date de réception <= date promise
     - complète : quantité reçue >= quantité commandée
+    Les commandes sans date de réception (encore ouvertes) sont ignorées.
     """
-    query = "SELECT promised_date, received_date, qty_ordered, qty_received FROM purchase_orders"
+    query = (
+        "SELECT promised_date, received_date, qty_ordered, qty_received FROM purchase_orders "
+        "WHERE received_date IS NOT NULL"  # les commandes encore ouvertes ne comptent pas
+    )
     params: tuple = ()
     if supplier_id is not None:
-        query += " WHERE supplier_id = ?"
+        query += " AND supplier_id = ?"
         params = (supplier_id,)
     orders = pd.read_sql(query, conn, params=params)
     if orders.empty:

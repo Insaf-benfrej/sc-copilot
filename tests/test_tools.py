@@ -26,7 +26,7 @@ def conn(tmp_path_factory):
 # ---- le menu
 def test_menu_bien_forme():
     names = [t["name"] for t in TOOLS]
-    assert len(names) == len(set(names)) == 6
+    assert len(names) == len(set(names)) == 9
     for tool in TOOLS:
         assert tool["description"]
         assert tool["parameters"]["type"] == "object"

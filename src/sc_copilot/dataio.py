@@ -63,9 +63,9 @@ SPEC: dict[str, list[Col]] = {
         Col("supplier_id", "int"),
         Col("order_date", "date"),
         Col("promised_date", "date"),
-        Col("received_date", "date"),
+        Col("received_date", "date", required=False),  # vide = commande encore ouverte
         Col("qty_ordered", "float", min=0),
-        Col("qty_received", "float", min=0),
+        Col("qty_received", "float", required=False, min=0),  # vide = commande encore ouverte
     ],
 }
 TABLES = list(SPEC)
@@ -193,8 +193,13 @@ def _check_relations(frames: dict[str, pd.DataFrame]) -> list[Issue]:
             issues.append(Issue("error", table, f"{column} absent de {ref_table} pour {int(missing.sum())} lignes (ex. {sample})."))
 
     orders = frames["purchase_orders"]
+    no_date, no_qty = orders["received_date"].isna(), orders["qty_received"].isna()
+    if (no_date != no_qty).any():
+        issues.append(Issue("error", "purchase_orders", f"received_date et qty_received doivent être vides ensemble ou remplies ensemble ({_rows(orders.index[no_date != no_qty])})."))
+    if (no_date & no_qty).any():
+        issues.append(Issue("warning", "purchase_orders", f"{int((no_date & no_qty).sum())} commandes ouvertes (sans réception) : ignorées pour l'OTIF, utilisées pour le risque de retard."))
     for late, early in (("promised_date", "order_date"), ("received_date", "order_date")):
-        wrong = pd.to_datetime(orders[late]) < pd.to_datetime(orders[early])
+        wrong = (pd.to_datetime(orders[late]) < pd.to_datetime(orders[early])).fillna(False)
         if wrong.any():
             issues.append(Issue("error", "purchase_orders", f"{late} antérieure à {early} ({_rows(orders.index[wrong])})."))
     mismatch = orders.merge(frames["parts"][["part_id", "supplier_id"]], on="part_id", suffixes=("", "_part"))

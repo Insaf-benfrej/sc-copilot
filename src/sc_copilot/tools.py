@@ -26,7 +26,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from sc_copilot import forecast, inventory, kpi
+from sc_copilot import analysis, forecast, inventory, kpi
 from sc_copilot.data_gen import N_WEEKS, START_DATE
 
 # Date "d'aujourd'hui" de la base fictive : juste après la dernière semaine de demande.
@@ -143,6 +143,63 @@ TOOLS = [
         },
     },
     {
+        "name": "top_deviations",
+        "description": (
+            "Les principaux écarts de livraison : les fournisseurs, pièces ou catégories qui ont le plus de "
+            "commandes à problème (en retard ou incomplètes, donc pas OTIF). À utiliser pour « quels sont les "
+            "3 principaux problèmes ? »."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "by": {"type": "string", "enum": ["supplier", "part", "category"], "description": "Regrouper par fournisseur (par défaut), pièce ou catégorie."},
+                "n": {"type": "integer", "description": "Nombre de groupes à renvoyer (1 à 20, 3 par défaut)."},
+                "rank_by": {
+                    "type": "string",
+                    "enum": ["problem_orders", "otif"],
+                    "description": "problem_orders : le plus de commandes à problème (défaut) ; otif : le taux OTIF le plus bas.",
+                },
+                "since": {"type": "string", "description": "Date promise minimale AAAA-MM-JJ (facultatif)."},
+                "until": {"type": "string", "description": "Date promise maximale AAAA-MM-JJ (facultatif)."},
+                "min_orders": {"type": "integer", "description": "Nombre minimal de commandes pour classer un groupe (5 par défaut)."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "delay_risk",
+        "description": (
+            "Commandes d'achat encore ouvertes (non reçues) classées par risque de retard : risque élevé si la "
+            "rupture de stock est prévue avant l'arrivée attendue de la commande. Donne aussi le retard actuel et "
+            "la fiabilité passée du fournisseur."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Nombre de commandes à renvoyer (1 à 50, 10 par défaut)."},
+                "risk_level": {"type": "string", "enum": ["élevé", "moyen", "faible"], "description": "Ne garder que ce niveau de risque (facultatif)."},
+                "as_of": {"type": "string", "description": f"Date de référence AAAA-MM-JJ. Par défaut : {DATASET_TODAY}."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "performance_summary",
+        "description": (
+            "Résumé de performance de la chaîne d'approvisionnement : OTIF récent comparé à la période précédente, "
+            "pièces à risque, commandes ouvertes en retard, principal écart. Renvoie aussi un texte de synthèse "
+            "déjà rédigé (summary_text)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "weeks": {"type": "integer", "description": "Longueur de la période en semaines (1 à 52, 12 par défaut)."},
+                "as_of": {"type": "string", "description": f"Date de référence AAAA-MM-JJ. Par défaut : {DATASET_TODAY}."},
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "run_sql_readonly",
         "description": (
             "Pose une question libre à la base de données avec une requête SQL SELECT "
@@ -219,6 +276,17 @@ def _str(args: dict, key: str, default=None, choices=None, required=False, max_l
         raise ToolError(f"{key} est trop long (maximum {max_len} caractères).")
     if choices is not None and value not in choices:
         raise ToolError(f"{key} doit être l'une de ces valeurs : {', '.join(choices)}.")
+    return value
+
+
+def _date(args: dict, key: str, default=None) -> str | None:
+    value = _str(args, key, default=default, max_len=10)
+    if value is None:
+        return None
+    try:
+        date.fromisoformat(value)
+    except ValueError as error:
+        raise ToolError(f"{key} doit être une date au format AAAA-MM-JJ.") from error
     return value
 
 
@@ -328,6 +396,52 @@ def _recommend_reorder(conn, args):
     return inventory.recommend_policy(conn, part_id, service_level=service_level, method=method)
 
 
+def _top_deviations(conn, args):
+    _check_unknown(args, {"by", "n", "rank_by", "since", "until", "min_orders"})
+    by = _str(args, "by", default="supplier", choices=tuple(analysis.GROUPINGS))
+    n = _int(args, "n", default=3, minimum=1, maximum=20)
+    rank_by = _str(args, "rank_by", default="problem_orders", choices=("problem_orders", "otif"))
+    since, until = _date(args, "since"), _date(args, "until")
+    min_orders = _int(args, "min_orders", default=5, minimum=1, maximum=1000)
+    table, totals = analysis.top_deviations(conn, by, n, rank_by, since, until, min_orders)
+    return {
+        "by": by,
+        "rank_by": rank_by,
+        "since": since,
+        "until": until,
+        "min_orders": min_orders,
+        "total_orders": totals["total_orders"],
+        "total_problem_orders": totals["total_problem_orders"],
+        "otif_overall": totals["otif"],
+        "groups": _records(table.round(4)),
+    }
+
+
+def _delay_risk(conn, args):
+    _check_unknown(args, {"limit", "risk_level", "as_of"})
+    limit = _int(args, "limit", default=10, minimum=1, maximum=50)
+    level = _str(args, "risk_level", choices=("élevé", "moyen", "faible"))
+    as_of = _date(args, "as_of", default=DATASET_TODAY)
+    orders = analysis.delay_risk(conn, as_of)
+    counts = {name: int((orders["risk_level"] == name).sum()) for name in ("élevé", "moyen", "faible")}
+    if level:
+        orders = orders[orders["risk_level"] == level]
+    return {
+        "as_of": as_of,
+        "total_open_orders": sum(counts.values()),
+        "by_risk_level": counts,
+        "shown_filter": level,
+        "orders": _records(orders.head(limit).round(3)),
+    }
+
+
+def _performance_summary(conn, args):
+    _check_unknown(args, {"weeks", "as_of"})
+    weeks = _int(args, "weeks", default=12, minimum=1, maximum=52)
+    as_of = _date(args, "as_of", default=DATASET_TODAY)
+    return analysis.performance_summary(conn, as_of, weeks)
+
+
 def _run_sql(conn, args):
     _check_unknown(args, {"query"})
     return run_sql_readonly(conn, _str(args, "query", required=True))
@@ -339,6 +453,9 @@ HANDLERS = {
     "list_expiring_stock": _list_expiring_stock,
     "forecast_demand": _forecast_demand,
     "recommend_reorder": _recommend_reorder,
+    "top_deviations": _top_deviations,
+    "delay_risk": _delay_risk,
+    "performance_summary": _performance_summary,
     "run_sql_readonly": _run_sql,
 }
 
