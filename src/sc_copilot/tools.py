@@ -26,7 +26,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from sc_copilot import analysis, forecast, inventory, kpi
+from sc_copilot import analysis, forecast, inventory, kpi, scheduling
 from sc_copilot.data_gen import N_WEEKS, START_DATE
 
 # Date "d'aujourd'hui" de la base fictive : juste après la dernière semaine de demande.
@@ -197,6 +197,53 @@ TOOLS = [
                 "as_of": {"type": "string", "description": f"Date de référence AAAA-MM-JJ. Par défaut : {DATASET_TODAY}."},
             },
             "required": [],
+        },
+    },
+    {
+        "name": "schedule_tasks",
+        "description": (
+            "Calcule un ordonnancement optimal (solveur CP-SAT) : dans quel ordre et à quel moment exécuter des "
+            "jobs composés d'opérations successives sur des machines (ou postes, quais, équipes). Une machine fait "
+            "une opération à la fois. Les durées sont des entiers dans une unité commune (par exemple des heures). "
+            "Les données du problème doivent être données par l'utilisateur : ne jamais les inventer. "
+            "Objectif : finir le plus tôt possible (makespan) ou minimiser les retards (total_tardiness)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "jobs": {
+                    "type": "array",
+                    "description": "Liste des jobs (30 maximum).",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "Nom du job."},
+                            "operations": {
+                                "type": "array",
+                                "description": "Opérations à faire dans cet ordre.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "machine": {"type": "string", "description": "Nom de la machine ou du poste."},
+                                        "duration": {"type": "integer", "description": "Durée entière (1 à 1000)."},
+                                    },
+                                    "required": ["machine", "duration"],
+                                },
+                            },
+                            "release": {"type": "integer", "description": "Date de début au plus tôt (0 par défaut)."},
+                            "due": {"type": "integer", "description": "Date due (obligatoire pour total_tardiness)."},
+                        },
+                        "required": ["id", "operations"],
+                    },
+                },
+                "objective": {
+                    "type": "string",
+                    "enum": ["makespan", "total_tardiness"],
+                    "description": "makespan (par défaut) ou total_tardiness.",
+                },
+                "time_limit_s": {"type": "number", "description": "Temps de calcul maximal en secondes (0,1 à 30 ; 5 par défaut)."},
+            },
+            "required": ["jobs"],
         },
     },
     {
@@ -442,6 +489,16 @@ def _performance_summary(conn, args):
     return analysis.performance_summary(conn, as_of, weeks)
 
 
+def _schedule_tasks(conn, args):
+    _check_unknown(args, {"jobs", "objective", "time_limit_s"})
+    jobs = args.get("jobs")
+    if not isinstance(jobs, list):
+        raise ToolError("Argument obligatoire manquant ou invalide : jobs (liste).")
+    objective = _str(args, "objective", default="makespan", choices=("makespan", "total_tardiness"))
+    time_limit = _float(args, "time_limit_s", default=5.0, minimum=0.1, maximum=scheduling.MAX_TIME_LIMIT_S)
+    return scheduling.solve_schedule(jobs, objective, time_limit)
+
+
 def _run_sql(conn, args):
     _check_unknown(args, {"query"})
     return run_sql_readonly(conn, _str(args, "query", required=True))
@@ -456,6 +513,7 @@ HANDLERS = {
     "top_deviations": _top_deviations,
     "delay_risk": _delay_risk,
     "performance_summary": _performance_summary,
+    "schedule_tasks": _schedule_tasks,
     "run_sql_readonly": _run_sql,
 }
 
